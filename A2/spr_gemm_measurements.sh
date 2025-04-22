@@ -4,6 +4,7 @@
 #PBS -q prod                                                                                                                                                                                                                       
 #PBS -k doe                                                                                                                                                                                                                        
 #PBS -A Performance                                                                                                                                                                                                                
+#PBS -l filesystems=flare:home
 
 cd ${PBS_O_WORKDIR}
 
