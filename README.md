@@ -2,3 +2,5 @@
 Artifacts Description for the SC25 Aurora Paper
 
 This space contains the description of the computational artifacts related to the Aurora Paper submitted to SC25.
+
+This project is licensed under the terms of the MIT license.
