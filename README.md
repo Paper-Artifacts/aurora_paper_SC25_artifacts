@@ -1,5 +1,5 @@
 # aurora_paper_SC25_artifacts
-Artifacts Description for the SC25 Aurora Paper
+Artifacts Description for the SC25 Aurora Paper: Aurora: Architecting Argonne’s First Exascale Supercomputer for Accelerated Scientific Discovery
 
 This space contains the description of the four computational artifacts described in the Appendix of the Aurora Paper submitted to SC25.
 
