@@ -1,6 +1,6 @@
 # aurora_paper_SC25_artifacts
 Artifacts Description for the SC25 Aurora Paper
 
-This space contains the description of the computational artifacts related to the Aurora Paper submitted to SC25.
+This space contains the description of the four computational artifacts described in the Appendix of the Aurora Paper submitted to SC25.
 
-This project is licensed under the terms of the MIT license.
+The Aurora Paper provides a description of the design and architecture of the Aurora supercomputer at Argonne National Laboratory. Apart from tables listing benchmark numbers, the paper does not contain other computational artifacts, such as: software, datasets, environment configuration, mechanized proofs, test suites with scripts, etc.
