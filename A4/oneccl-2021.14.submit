@@ -1,0 +1,132 @@
+#!/bin/bash
+#PBS -l select=128
+#PBS -A <account>
+#PBS -q prod
+#PBS -l walltime=01:00:00
+#PBS -l filesystems=home:flare
+#PBS -o /path/to/job/output
+#PBS -e /path/to/job/output 
+
+JOB_DIR=/path/to/job/output/${PBS_JOBID}
+
+# Get node count and set relevant enironment variables
+NODES=$(cat $PBS_NODEFILE | wc -l)
+export ZE_FLAT_DEVICE_HIERARCHY=FLAT
+export ZE_AFFINITY_MASK=0,1,2,3,4,5,6,7,8,9,10,11
+export GPUS_PER_NODE=6
+export TILES_PER_GPU=2
+export RANKS_PER_TILE=1
+RANKS_PER_NODE=$(( GPUS_PER_NODE * TILES_PER_GPU * RANKS_PER_TILE ))
+RANKS=$((NODES * RANKS_PER_NODE ))
+echo [$SECONDS] NODES=$NODES GPUS_PER_NODE=$GPUS_PER_NODE TILES_PER_GPU=$TILES_PER_GPU RANKS_PER_TILE=$RANKS_PER_TILE RANKS=$RANKS
+
+#Distribute and unpack oneCCL benchmark build
+ONECCL_BUILD_VERSION=oneccl-2021.14
+ONECCL_TARBALL="/path/to/oneccl-tarball/${ONECCL_BUILD_VERSION}.tgz"
+echo [$SECONDS] Start distribute tarball
+max_retries=3
+attempt=1
+touch /tmp/distribute_${PBS_JOBID}.log
+while [ $attempt -le $max_retries ]; do
+    echo "[$SECONDS] Start Attempt #$attempt: Distributing tarball..."
+    clush --hostfile $PBS_NODEFILE -t 60 -S "cp ${ONECCL_TARBALL} /tmp/" >> /tmp/distribute_${PBS_JOBID}.log 2>&1
+    rc=$?
+    if [ $rc -eq 0 ]; then
+        echo "    Distribution succeeded on attempt #$attempt."
+        echo "[$SECONDS] End Attempt #$attempt: Distributing tarball..."
+        break
+    else
+        echo "    WARNING: Distribution failed on attempt #$attempt (rc=$rc)."
+        echo "[$SECONDS] End Attempt #$attempt: Distributing tarball..."
+        attempt=$((attempt + 1))
+        if [ $attempt -gt $max_retries ]; then
+            echo "ERROR: All $max_retries attempts have failed. Exiting."
+            exit 1
+        fi
+        sleep 5  # Short pause before retrying
+    fi
+done
+echo [$SECONDS] End distribute tarball
+echo [$SECONDS] Start unpack tarball
+max_retries=3
+attempt=1
+touch /tmp/unpack_${PBS_JOBID}.log
+while [ $attempt -le $max_retries ]; do
+    echo "[$SECONDS] Start Attempt #$attempt: Unpacking tarball..."
+    clush --hostfile $PBS_NODEFILE -t 60 -S "tar -xzf /tmp/${ONECCL_BUILD_VERSION}.tgz -C /tmp/" >> /tmp/unpack_${PBS_JOBID}.log 2>&1
+    rc=$?
+    if [ $rc -eq 0 ]; then
+        echo "    Unpack succeeded on attempt #$attempt."
+        echo "[$SECONDS] End Attempt #$attempt: Unpacking tarball..."
+        break
+    else
+        echo "    WARNING: Unpack failed on attempt #$attempt (rc=$rc)."
+        echo "[$SECONDS] End Attempt #$attempt: Unpacking tarball..."
+        attempt=$((attempt + 1))
+        if [ $attempt -gt $max_retries ]; then
+            echo "ERROR: All $max_retries attempts have failed. Exiting."
+            exit 1
+        fi
+        sleep 5  # Short pause before retrying
+    fi
+done
+echo [$SECONDS] End unpack tarball
+cd /tmp
+
+#Load deployed oneCCL module
+echo [$SECONDS] Load module
+module use /path/to/oneccl/modulefiles
+module load ${ONECCL_BUILD_VERSION}/2021.14
+
+#Bind ranks explicitly (see man mpiexec)
+export CPU_BIND="list:2-4:10-12:18-20:26-28:34-36:42-44:54-56:62-64:70-72:78-80:86-88:94-96"
+export CCL_WORKER_AFFINITY="5,13,21,29,37,45,57,65,73,81,89,97"
+
+#Set experiment environment variables
+export CCL_PROCESS_LAUNCHER=pmix
+export CCL_ATL_TRANSPORT=mpi
+export CCL_KVS_MODE=mpi
+export CCL_ALLGATHERV=direct
+export CCL_ALLREDUCE=topo
+export CCL_LOG_LEVEL=error
+
+#Create output directory
+rm -rf /tmp/oneCCL_test/out_${PBS_JOBID}
+mkdir -p /tmp/oneCCL_test/out_${PBS_JOBID}
+
+#Run benchmark and gather metrics
+export BUF_SIZE=268435456
+for ALG in 'rabenseifner' 'direct' 'double_tree' 'recursive_doubling' 'ring'
+do
+    export CCL_ALLREDUCE_SCALEOUT=${ALG}
+    echo [$SECONDS] Start benchmark ${NODES}_${BUF_SIZE}_${ALG}_no-sync 
+    mpiexec --no-transfer --cpu-bind ${CPU_BIND} -n ${RANKS} -ppn ${RANKS_PER_NODE} \
+        ${CCL_ROOT}/examples/benchmark/benchmark \
+            --elem_counts ${BUF_SIZE},${BUF_SIZE},${BUF_SIZE}  \
+            --coll allreduce \
+            -j off \
+            -i 100 \
+            -w 10 \
+            -c off \
+            --backend sycl \
+            --sycl_dev_type gpu \
+            -o /tmp/oneCCL_test/out_${PBS_JOBID}/oneccl_allreduce_${PBS_JOBID}_${NODES}_${RANKS}_${RANKS_PER_NODE}_${BUF_SIZE}_${ALG}_async.csv \
+        > /tmp/oneCCL_test/out_${PBS_JOBID}/oneccl_allreduce_${PBS_JOBID}_${NODES}_${RANKS}_${RANKS_PER_NODE}_${BUF_SIZE}_${ALG}_async.txt 2>&1
+    echo [$SECONDS] End benchmark ${NODES}_${BUF_SIZE}_${ALG}_no-sync 
+done
+
+cd /tmp/oneCCL_test
+echo [$SECONDS] Start archive and compress output 
+tar czf out_${PBS_JOBID}.tar.gz out_${PBS_JOBID}/
+echo [$SECONDS] End archive and compress output 
+
+rm -rf ${JOB_DIR}
+mkdir -p ${JOB_DIR}
+echo [$SECONDS] Start copy output archive
+cp out_${PBS_JOBID}.tar.gz ${JOB_DIR}/
+echo [$SECONDS] End copy output archive
+
+echo [$SECONDS] Start copy distribute and unpack logs
+cp /tmp/distribute_${PBS_JOBID}.log ${JOB_DIR}/
+cp /tmp/unpack_${PBS_JOBID}.log ${JOB_DIR}/
+echo [$SECONDS] End copy distribute and unpack logs
